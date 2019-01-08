@@ -39,7 +39,7 @@ namespace BrickController2.Droid.PlatformServices.GameController
 
         public bool OnKeyDown([GeneratedEnum] Keycode keyCode, KeyEvent e)
         {
-            if ((((int)e.Source & (int)InputSourceType.Gamepad) == (int)InputSourceType.Gamepad) && e.RepeatCount == 0)
+            if (e.RepeatCount == 0)
             {
                 GameControllerEventInternal?.Invoke(this, new GameControllerEventArgs(GameControllerEventType.Button, e.KeyCode.ToString(), 1.0F));
                 return true;
@@ -50,7 +50,7 @@ namespace BrickController2.Droid.PlatformServices.GameController
 
         public bool OnKeyUp([GeneratedEnum] Keycode keyCode, KeyEvent e)
         {
-            if ((((int)e.Source & (int)InputSourceType.Gamepad) == (int)InputSourceType.Gamepad) && e.RepeatCount == 0)
+            if (e.RepeatCount == 0)
             {
                 GameControllerEventInternal?.Invoke(this, new GameControllerEventArgs(GameControllerEventType.Button, e.KeyCode.ToString(), 0.0F));
                 return true;
