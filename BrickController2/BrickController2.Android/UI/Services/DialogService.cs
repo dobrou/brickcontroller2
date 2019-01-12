@@ -15,11 +15,13 @@ namespace BrickController2.Droid.UI.Services
     {
         private readonly Activity _context;
         private readonly GameControllerService _gameControllerService;
+        private readonly IControllerService _controllerService;
 
-        public DialogService(Activity context, GameControllerService gameControllerService)
+        public DialogService(Activity context, GameControllerService gameControllerService, IControllerService controllerService)
         {
             _context = context;
             _gameControllerService = gameControllerService;
+            _controllerService = controllerService;
         }
 
         public async Task ShowMessageBoxAsync(string title, string message, string buttonText, CancellationToken token)
@@ -194,12 +196,12 @@ namespace BrickController2.Droid.UI.Services
             dialog.SetMessage(message);
             dialog.SetButton((int)DialogButtonType.Negative, cancelButtonText ?? "Cancel", (sender, args) =>
             {
-                _gameControllerService.GameControllerEvent -= GameControllerEventHandler;
+                _controllerService.GameControllerEvent -= GameControllerEventHandler;
                 dialog.Dismiss();
                 completionSource.SetResult(new GameControllerEventDialogResult(false, GameControllerEventType.Button, null));
             });
 
-            _gameControllerService.GameControllerEvent += GameControllerEventHandler;
+            _controllerService.GameControllerEvent += GameControllerEventHandler;
 
             dialog.SetCancelable(false);
             dialog.SetCanceledOnTouchOutside(false);
@@ -207,7 +209,7 @@ namespace BrickController2.Droid.UI.Services
 
             using (token.Register(() =>
             {
-                _gameControllerService.GameControllerEvent -= GameControllerEventHandler;
+                _controllerService.GameControllerEvent -= GameControllerEventHandler;
                 dialog.Dismiss();
                 completionSource.SetCanceled();
             }))
@@ -227,7 +229,7 @@ namespace BrickController2.Droid.UI.Services
                     if ((controllerEvent.Key.EventType == GameControllerEventType.Axis && Math.Abs(controllerEvent.Value) > 0.8) ||
                         (controllerEvent.Key.EventType == GameControllerEventType.Button && Math.Abs(controllerEvent.Value) < 0.05))
                     {
-                        _gameControllerService.GameControllerEvent -= GameControllerEventHandler;
+                        _controllerService.GameControllerEvent -= GameControllerEventHandler;
                         dialog.Dismiss();
                         completionSource.SetResult(new GameControllerEventDialogResult(true, controllerEvent.Key.EventType, controllerEvent.Key.EventCode));
                         return;

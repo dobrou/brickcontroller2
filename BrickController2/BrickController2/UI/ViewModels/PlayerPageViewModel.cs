@@ -18,7 +18,7 @@ namespace BrickController2.UI.ViewModels
     {
         private readonly IDeviceManager _deviceManager;
         private readonly IDialogService _dialogService;
-        private readonly IGameControllerService _gameControllerService;
+        private readonly IControllerService _gameControllerService;
 
         private readonly IList<Device> _devices = new List<Device>();
         private readonly IList<Device> _buwizzDevices = new List<Device>();
@@ -32,7 +32,7 @@ namespace BrickController2.UI.ViewModels
         private CancellationTokenSource _connectionTokenSource;
         private TaskCompletionSource<bool> _connectionCompletionSource;
         private bool _reconnect = false;
-        private bool _isDisappearing = false;
+        private bool _isDisappearing = true;
         private CancellationTokenSource _disappearingTokenSource;
 
         public PlayerPageViewModel(
@@ -40,7 +40,7 @@ namespace BrickController2.UI.ViewModels
             ITranslationService translationService,
             IDeviceManager deviceManager,
             IDialogService dialogService,
-            IGameControllerService gameControllerService,
+            IControllerService gameControllerService,
             NavigationParameters parameters)
             : base(navigationService, translationService)
         {
@@ -68,8 +68,13 @@ namespace BrickController2.UI.ViewModels
         public int BuWizzOutputLevel { get; set; } = 1;
         public int BuWizz2OutputLevel { get; set; } = 1;
 
+        public bool KeepRunningInBackground { get; set; } = false;
+
         public override async void OnAppearing()
         {
+            if (_isDisappearing == false)
+                return;
+
             _isDisappearing = false;
             _disappearingTokenSource?.Cancel();
             _disappearingTokenSource = new CancellationTokenSource();
@@ -97,6 +102,9 @@ namespace BrickController2.UI.ViewModels
 
         public override async void OnDisappearing()
         {
+            if (KeepRunningInBackground)
+                return;
+
             _isDisappearing = true;
 
             _gameControllerService.GameControllerEvent -= GameControllerEventHandler;

@@ -1,9 +1,6 @@
-﻿using System;
-
-namespace BrickController2.PlatformServices.GameController
+﻿namespace BrickController2.PlatformServices.GameController
 {
-    public interface IGameControllerService
+    public interface IGameControllerService : IControllerService
     {
-        event EventHandler<GameControllerEventArgs> GameControllerEvent;
     }
 }

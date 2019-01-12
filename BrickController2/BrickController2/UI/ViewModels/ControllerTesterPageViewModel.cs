@@ -9,12 +9,12 @@ namespace BrickController2.UI.ViewModels
 {
     public class ControllerTesterPageViewModel : PageViewModelBase
     {
-        private readonly IGameControllerService _gameControllerService;
+        private readonly IControllerService _gameControllerService;
 
         public ControllerTesterPageViewModel(
             INavigationService navigationService,
             ITranslationService translationService,
-            IGameControllerService gameControllerService)
+            IControllerService gameControllerService)
             : base(navigationService, translationService)
         {
             _gameControllerService = gameControllerService;

@@ -25,17 +25,11 @@ namespace BrickController2.UI.Pages
         {
             OnAppearingInternal();
 
-            _backgroundService.ApplicationSleepEvent += OnApplicationSleep;
-            _backgroundService.ApplicationResumeEvent += OnApplicationResume;
-
             base.OnAppearing();
         }
 
         protected override void OnDisappearing()
         {
-            _backgroundService.ApplicationSleepEvent -= OnApplicationSleep;
-            _backgroundService.ApplicationResumeEvent -= OnApplicationResume;
-
             OnDisappearingInternal();
 
             base.OnDisappearing();
@@ -45,16 +39,6 @@ namespace BrickController2.UI.Pages
         {
             var result = ((BindingContext as PageViewModelBase)?.OnBackButtonPressed()) ?? true;
             return result && base.OnBackButtonPressed();
-        }
-
-        private void OnApplicationSleep(object sender, EventArgs args)
-        {
-            OnDisappearingInternal();
-        }
-
-        private void OnApplicationResume(object sender, EventArgs args)
-        {
-            OnAppearingInternal();
         }
 
         private void OnAppearingInternal()

@@ -82,6 +82,7 @@ namespace BrickController2.Droid
 
             builder.RegisterModule(new DatabaseModule());
             builder.RegisterModule(new CreationManagementModule());
+            builder.RegisterModule(new BrickController2.PlatformServices.DI.PlatformServicesModule());
             builder.RegisterModule(new DeviceManagementModule());
             builder.RegisterModule(new UiModule());
 

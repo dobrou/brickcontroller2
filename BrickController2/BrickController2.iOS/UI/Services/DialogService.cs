@@ -12,10 +12,12 @@ namespace BrickController2.iOS.UI.Services
     public class DialogService : IDialogService
     {
         private readonly IGameControllerService _gameControllerService;
+        private readonly IControllerService _controllerService;
 
-        public DialogService(IGameControllerService gameControllerService)
+        public DialogService(IGameControllerService gameControllerService, IControllerService controllerService)
         {
             _gameControllerService = gameControllerService;
+            _controllerService = controllerService;
         }
 
         public async Task ShowMessageBoxAsync(string title, string message, string buttonText, CancellationToken token)
@@ -156,11 +158,11 @@ namespace BrickController2.iOS.UI.Services
             var completionSource = new TaskCompletionSource<GameControllerEventDialogResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             var alert = UIAlertController.Create(title, message, UIAlertControllerStyle.Alert);
 
-            _gameControllerService.GameControllerEvent += GameControllerEventHandler;
+            _controllerService.GameControllerEvent += GameControllerEventHandler;
 
             alert.AddAction(UIAlertAction.Create(cancelButtonText ?? "Cancel", UIAlertActionStyle.Cancel, action =>
             {
-                _gameControllerService.GameControllerEvent -= GameControllerEventHandler;
+                _controllerService.GameControllerEvent -= GameControllerEventHandler;
                 completionSource.SetResult(new GameControllerEventDialogResult(false, GameControllerEventType.Button, null));
             }));
 
@@ -168,7 +170,7 @@ namespace BrickController2.iOS.UI.Services
 
             using (token.Register(async () =>
             {
-                _gameControllerService.GameControllerEvent -= GameControllerEventHandler;
+                _controllerService.GameControllerEvent -= GameControllerEventHandler;
                 await alert.DismissViewControllerAsync(true);
                 completionSource.SetCanceled();
             }))
@@ -188,7 +190,7 @@ namespace BrickController2.iOS.UI.Services
                     if ((controllerEvent.Key.EventType == GameControllerEventType.Axis && Math.Abs(controllerEvent.Value) > 0.8) ||
                         (controllerEvent.Key.EventType == GameControllerEventType.Button && Math.Abs(controllerEvent.Value) < 0.05))
                     {
-                        _gameControllerService.GameControllerEvent -= GameControllerEventHandler;
+                        _controllerService.GameControllerEvent -= GameControllerEventHandler;
                         await alert.DismissViewControllerAsync(true);
                         completionSource.SetResult(new GameControllerEventDialogResult(true, controllerEvent.Key.EventType, controllerEvent.Key.EventCode));
                         return;
