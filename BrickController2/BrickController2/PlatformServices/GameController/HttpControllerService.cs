@@ -1,14 +1,16 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using BrickController2.Helpers;
 using ISimpleHttpListener.Rx.Model;
 using SimpleHttpListener.Rx.Extension;
 using SimpleHttpListener.Rx.Model;
@@ -42,12 +44,14 @@ namespace BrickController2.PlatformServices.GameController
 
             _serverCancellationToken = new CancellationTokenSource();
 
-            _serverListener = tcpListener
+            _serverListener =
+                tcpListener
                 .ToHttpListenerObservable(_serverCancellationToken.Token)
                 // Fire key events from request
+                .ObserveOnUsingNewEventLoopSchedulerOnBackground()
                 .Select(ProcessHttpRequest)
                 // Send response to client
-                .ObserveOn(TaskPoolScheduler.Default)
+                .ObserveOnUsingNewEventLoopSchedulerOnBackground()
                 .Select(r => Observable.FromAsync(() => SendResponse(r.request, httpSender, r.code, r.message)))
                 .Concat()
                 .Subscribe()
@@ -72,23 +76,32 @@ namespace BrickController2.PlatformServices.GameController
                 // Example: http://phoneip:8080/Button/X/1
                 // Example: http://phoneip:8080/Axis/X/-0.5
                 var tokens = request.Path?.Trim('/').Split('/') ?? new string[0];
-                if (tokens.Length < 3)
-                {
 
+                var tokensPerEvent = 3;
+
+                if (tokens.Length < tokensPerEvent)
+                {
                     // unknown url pattern, show main page
                     return (request, HttpStatusCode.OK, defaultWebPage);
                 }
 
-                // parse pressed keys
-                if (!Enum.TryParse<GameControllerEventType>(tokens[0], out var controllerType))
-                    controllerType = GameControllerEventType.Button;
-                var key = tokens[1];
-                if (!float.TryParse(tokens[2], NumberStyles.Number, CultureInfo.InvariantCulture, out var value))
-                    value = 0;
+                var events =
+                    Enumerable.Range(0, tokens.Length / tokensPerEvent)
+                    // split multiple events
+                    .Select(i => Enumerable.Range(0, tokensPerEvent).Select(ii => tokens[i*tokensPerEvent+ii]).ToList() )
+                    // parse pressed keys
+                    .Select(eventTokens => new {
+                        type = Enum.TryParse<GameControllerEventType>(eventTokens[0], out var controllerType) ? controllerType : GameControllerEventType.Button,
+                        key = eventTokens[1],
+                        value = float.TryParse(eventTokens[2], NumberStyles.Number, CultureInfo.InvariantCulture, out var value) ? value : 0,
+                    })
+                    .ToLookup(k => (type: k.type, key: k.key), v => v.value)
+                    .ToDictionary(k => k.Key, v => v.Last())
+                ;
 
-                GameControllerEvent?.Invoke(this, new GameControllerEventArgs(controllerType, key, value));
+                GameControllerEvent?.Invoke(this, new GameControllerEventArgs(events));
 
-                return (request, HttpStatusCode.OK, $"{controllerType}:{key}:{value}");
+                return (request, HttpStatusCode.OK, string.Join("\n", events.Select(e => $"{e.Key.type}:{e.Key.key}:{e.Value}") ) );
             }
             catch (Exception ex)
             {
@@ -129,7 +142,7 @@ namespace BrickController2.PlatformServices.GameController
 div#controls input[type=range] {
   width: 1pc;
   height: 10pc;
-  margin: 4pc;
+  margin: 2pc;
   -webkit-appearance: slider-vertical;  
 }
 </style>
@@ -138,6 +151,7 @@ div#controls input[type=range] {
 <div id='controls'>
   <input type='range' min='-1' max='1' step='0.1' id='joy1' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
   <input type='range' min='-1' max='1' step='0.1' id='joy2' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
+  <input type='range' min='-1' max='1' step='0.1' id='joy3' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
 </div>
 <div>
   <input type='checkbox' id='joyautoreset' checked />
