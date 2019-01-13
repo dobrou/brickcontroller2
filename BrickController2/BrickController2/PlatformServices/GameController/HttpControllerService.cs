@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Reactive.Concurrency;
 using System.Reactive.Linq;
 using System.Text;
 using System.Threading;
@@ -37,7 +38,7 @@ namespace BrickController2.PlatformServices.GameController
 
             var tcpListener = new TcpListener(IPAddress.Any, 8080)
             {
-                ExclusiveAddressUse = false,
+                ExclusiveAddressUse = false,                
             };
 
             var httpSender = new HttpSender();
@@ -49,9 +50,10 @@ namespace BrickController2.PlatformServices.GameController
                 .ToHttpListenerObservable(_serverCancellationToken.Token)
                 // Fire key events from request
                 .ObserveOnUsingNewEventLoopSchedulerOnBackground()
-                .Select(ProcessHttpRequest)
+                .TimeInterval()
+                .Select(x => ProcessHttpRequest(x.Value, x.Interval))
                 // Send response to client
-                .ObserveOnUsingNewEventLoopSchedulerOnBackground()
+                .ObserveOn(TaskPoolScheduler.Default)
                 .Select(r => Observable.FromAsync(() => SendResponse(r.request, httpSender, r.code, r.message)))
                 .Concat()
                 .Subscribe()
@@ -62,6 +64,7 @@ namespace BrickController2.PlatformServices.GameController
         {
             using (_serverListener) _serverListener = null;
             using (_serverCancellationToken) _serverCancellationToken = null;
+            _lastSeenKeyOrder.Clear();
         }
 
         public void Dispose()
@@ -69,7 +72,10 @@ namespace BrickController2.PlatformServices.GameController
             Stop();
         }
 
-        (IHttpRequestResponse request, HttpStatusCode code, string message) ProcessHttpRequest(IHttpRequestResponse request)
+        private readonly Dictionary<(GameControllerEventType type, string key), long> _lastSeenKeyOrder = new Dictionary<(GameControllerEventType type, string key), long>();
+
+        (IHttpRequestResponse request, HttpStatusCode code, string message) ProcessHttpRequest(
+            IHttpRequestResponse request, TimeSpan interval)
         {
             try
             {
@@ -77,7 +83,7 @@ namespace BrickController2.PlatformServices.GameController
                 // Example: http://phoneip:8080/Axis/X/-0.5
                 var tokens = request.Path?.Trim('/').Split('/') ?? new string[0];
 
-                var tokensPerEvent = 3;
+                var tokensPerEvent = 4;
 
                 if (tokens.Length < tokensPerEvent)
                 {
@@ -94,14 +100,38 @@ namespace BrickController2.PlatformServices.GameController
                         type = Enum.TryParse<GameControllerEventType>(eventTokens[0], out var controllerType) ? controllerType : GameControllerEventType.Button,
                         key = eventTokens[1],
                         value = float.TryParse(eventTokens[2], NumberStyles.Number, CultureInfo.InvariantCulture, out var value) ? value : 0,
+                        order = long.TryParse( eventTokens[3], out var order) ? order : long.MinValue,
+                    })    
+                    .Select(x => new {
+                        x.type,
+                        x.key,
+                        x.value,
+                        x.order,
+                        // make sure to skip out of order key presses, so that we won't override eg. last button release event
+                        isSkipped = 
+                            x.order != long.MinValue 
+                            && _lastSeenKeyOrder.TryGetValue((x.type, x.key), out var lastOrder) 
+                            && x.order < lastOrder,
                     })
-                    .ToLookup(k => (type: k.type, key: k.key), v => v.value)
-                    .ToDictionary(k => k.Key, v => v.Last())
+                    .ToList()
                 ;
 
-                GameControllerEvent?.Invoke(this, new GameControllerEventArgs(events));
+                // write current order values to cache
+                events.ForEach(e => {
+                    if(!e.isSkipped && e.order != long.MinValue)
+                        _lastSeenKeyOrder[(e.type, e.key)] = e.order;
+                });
 
-                return (request, HttpStatusCode.OK, string.Join("\n", events.Select(e => $"{e.Key.type}:{e.Key.key}:{e.Value}") ) );
+                var eventArgs = events
+                        .Where(x => !x.isSkipped)
+                        .ToLookup(k => (type: k.type, key: k.key), v => v.value)
+                        .ToDictionary(k => k.Key, v => v.Last())
+                    ;
+
+                if (eventArgs.Any())
+                    GameControllerEvent?.Invoke(this, new GameControllerEventArgs(eventArgs));
+
+                return (request, HttpStatusCode.OK, $"Ms: {interval}\n" + string.Join("\n", events.Select(e => $"{e.type}:{e.key}:{e.value}:{e.isSkipped}") ) );
             }
             catch (Exception ex)
             {
@@ -149,9 +179,9 @@ div#controls input[type=range] {
 </head>
 <body>
 <div id='controls'>
-  <input type='range' min='-1' max='1' step='0.1' id='joy1' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
-  <input type='range' min='-1' max='1' step='0.1' id='joy2' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
-  <input type='range' min='-1' max='1' step='0.1' id='joy3' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
+  <input type='range' min='-1' max='1' step='0.1' id='X' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
+  <input type='range' min='-1' max='1' step='0.1' id='Y' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
+  <input type='range' min='-1' max='1' step='0.1' id='Z' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
 </div>
 <div>
   <input type='checkbox' id='joyautoreset' checked />
@@ -182,7 +212,7 @@ div#controls input[type=range] {
   }
     
   function sendEvent(type, key, value) {    
-    var url='/'+type+'/'+key+'/'+value;
+    var url='/'+type+'/'+key+'/'+value+'/'+(new Date().getTime());
   
     document.getElementById('lastkey').textContent = url;
     console.log(url);
