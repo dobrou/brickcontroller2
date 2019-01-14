@@ -114,6 +114,7 @@ namespace BrickController2.PlatformServices.GameController
                 request.request.Response.StatusCode = (int) request.code;
                 request.request.Response.StatusDescription = request.code.ToString();
                 request.request.Response.ContentType = "text/html; charset=UTF-8";
+                request.request.Response.Headers.Add("Access-Control-Allow-Origin", "*");
                 var buffer = Encoding.UTF8.GetBytes(request.message);
                 request.request.Response.Close(buffer, false);
             }
@@ -124,6 +125,8 @@ namespace BrickController2.PlatformServices.GameController
         }
 
         private string defaultWebPage = @"
+
+
 <html>
 <head>
 <title>Brick Controller</title>
@@ -131,30 +134,91 @@ namespace BrickController2.PlatformServices.GameController
 div#controls input[type=range] {
   width: 1pc;
   height: 10pc;
-  margin: 2pc;
+  padding: 2pc;
+  margin: 1pc 0;
   -webkit-appearance: slider-vertical;  
+}
+div.joy {  
+  width: 49%;
+  height: 15pc;
+  margin: 0.5%;
+  position: relative;
+  float:left;
+  filter: brightness(85%);
 }
 </style>
 </head>
 <body>
 <div id='controls'>
-  <input type='range' min='-1' max='1' step='0.1' id='X' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
-  <input type='range' min='-1' max='1' step='0.1' id='Y' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
-  <input type='range' min='-1' max='1' step='0.1' id='Z' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' />
+  <input type='range' min='-1' max='1' step='0.1' id='X' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' ></input>
+  <input type='range' min='-1' max='1' step='0.1' id='Y' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' ></input>
+  <input type='range' min='-1' max='1' step='0.1' id='A' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' ></input>
+  <input type='range' min='-1' max='1' step='0.1' id='B' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' ></input>
+  <input type='range' min='-1' max='1' step='0.1' id='C' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' ></input>
+  <input type='range' min='-1' max='1' step='0.1' id='D' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' ></input>
 </div>
 <div>
-  <input type='checkbox' id='joyautoreset' checked />
+  <input type='checkbox' id='joyautoreset' checked  ></input>
   <label for='joyautoreset'>Joystick position auto reset</label>
 </div>
 <div>
-  Last key pressed: <div id='lastkey'/>
+  <input type='text' id='server' value=''></input>
+  <label for='server'>Brick Controller address</label>
+  <script type='text/javascript'>document.getElementById('server').value = window.location.host</script>
 </div>
 <div>
-  Last key response: <div id='lastresponse'/>
+  Last key pressed: <div id='lastkey' ></div>
+</div>
+<div>
+  Last key response: <div id='lastresponse' ></div>
 </div>
 <div>
   Press any key to send it as button event.
 </div>
+<div>
+  Touch and drag color or sliders boxes as joystick.
+</div>
+
+<script type='text/javascript' src='https://yoannmoinet.github.io/nipplejs/javascripts/nipplejs.js'></script>
+<script>
+  function createJoy(id, color, xname, yname){
+    var container = document.body;
+    var joyElement = document.createElement('div');
+    joyElement.id = 'joy'+id;
+    joyElement.className = 'joy';
+    joyElement.style.backgroundColor = 'hsl('+color+',90%,80%)';
+    container.appendChild(joyElement);
+    
+    var joyRadius = 100;
+    var options = {
+        zone: document.getElementById('joy'+id),
+        fadeTime: 250,
+        size: joyRadius*2,
+        color: 'hsl('+color+',80%,50%)',
+    };
+    var manager = nipplejs.create(options);
+    manager.on('move', function (evt, data) {
+      var position = manager.get(data.identifier).frontPosition;
+      var dx =  position.x / joyRadius;
+      var dy = -position.y / joyRadius;
+      
+      sendEventThrottled('Axis', xname, dx);
+      sendEventThrottled('Axis', yname, dy);    
+    });  
+    manager.on('end', function (evt, data) {
+      sendEventThrottled('Axis', xname, 0);
+      sendEventThrottled('Axis', yname, 0);    
+    });  
+  }
+  
+  createJoy(1, 10,  'X', 'Y');
+  createJoy(2, 320, 'A', 'B');
+  createJoy(3, 140, 'C', 'D');
+  createJoy(4, 60,  'E', 'F');
+  createJoy(5, 220, '1', '2');
+  createJoy(6, 180, '3', '4');
+</script>
+
 
 <script type='text/javascript'>
   document.addEventListener('keydown', function(event) {
@@ -171,9 +235,10 @@ div#controls input[type=range] {
   }
     
   function sendEvent(type, key, value) {    
-    var url='/'+type+'/'+key+'/'+value+'/'+(new Date().getTime());
+    var command = '/'+type+'/'+key+'/'+value+'/'+(new Date().getTime());
+    var url = 'http://' + document.getElementById('server').value + command;
   
-    document.getElementById('lastkey').textContent = url;
+    document.getElementById('lastkey').textContent = command;
     console.log(url);
 
     var Http = new XMLHttpRequest();
@@ -198,7 +263,7 @@ div#controls input[type=range] {
   }
     
   function sendEventThrottled(type, key, value) { 
-    var time = value == 0 ? 0 : 50;
+    var time = value == 0 ? 0 : 100;
     throttle( type+'.'+key, time, _ => sendEvent(type, key, value) );
   }
 
@@ -222,6 +287,7 @@ div#controls input[type=range] {
 </script>
 </body>
 </html>
+
 ";
 
     }
