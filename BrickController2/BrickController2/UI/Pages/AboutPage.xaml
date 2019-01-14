@@ -29,7 +29,6 @@
                 <Label Text="Plugin.Permissions"/>
                 <Label Text="SQLiteNetExtensionsAsync"/>
                 <Label Text="Xamarin.Forms"/>
-                <Label Text="SimpleHttpListener.Rx"/>
 
                 <BoxView BackgroundColor="#E0E0E0" HeightRequest="1" VerticalOptions="Center" HorizontalOptions="Fill" Margin="5,16,5,16"/>
 

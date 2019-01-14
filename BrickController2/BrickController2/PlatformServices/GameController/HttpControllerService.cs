@@ -12,17 +12,13 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using BrickController2.Helpers;
-using ISimpleHttpListener.Rx.Model;
-using SimpleHttpListener.Rx.Extension;
-using SimpleHttpListener.Rx.Model;
-using SimpleHttpListener.Rx.Service;
 
 namespace BrickController2.PlatformServices.GameController
-{
+{  
     public class HttpControllerService : IHttpControllerService, IDisposable
     {
-        private CancellationTokenSource _serverCancellationToken;
-        private IDisposable _serverListener;
+        private IDisposable _listenerSubscription;
+        private HttpListener _httpListener;
 
         public event EventHandler<GameControllerEventArgs> GameControllerEvent;
 
@@ -33,37 +29,30 @@ namespace BrickController2.PlatformServices.GameController
 
         public void Start()
         {
-            if (_serverListener != null)
-                return;
 
-            var tcpListener = new TcpListener(IPAddress.Any, 8080)
-            {
-                ExclusiveAddressUse = false,                
-            };
+            _httpListener = new HttpListener();
+            _httpListener.Prefixes.Add("http://*:8080/");
+            _httpListener.Start();
 
-            var httpSender = new HttpSender();
-
-            _serverCancellationToken = new CancellationTokenSource();
-
-            _serverListener =
-                tcpListener
-                .ToHttpListenerObservable(_serverCancellationToken.Token)
+            _listenerSubscription =
+                // Listen on http endpoint
+                Observable.FromAsync(() => _httpListener.GetContextAsync())
+                .Repeat()
                 // Fire key events from request
-                .ObserveOnUsingNewEventLoopSchedulerOnBackground()
-                .TimeInterval()
-                .Select(x => ProcessHttpRequest(x.Value, x.Interval))
+                .ObserveOnUsingNewEventLoopSchedulerOnBackground()                
+                .Select(ProcessHttpRequest)
                 // Send response to client
                 .ObserveOn(TaskPoolScheduler.Default)
-                .Select(r => Observable.FromAsync(() => SendResponse(r.request, httpSender, r.code, r.message)))
-                .Concat()
+                .Do(SendResponse)
+                .Retry()
                 .Subscribe()
             ;
         }
 
         public void Stop()
         {
-            using (_serverListener) _serverListener = null;
-            using (_serverCancellationToken) _serverCancellationToken = null;
+            using (_listenerSubscription) _listenerSubscription = null;
+            _httpListener.Stop();
             _lastSeenKeyOrder.Clear();
         }
 
@@ -74,14 +63,13 @@ namespace BrickController2.PlatformServices.GameController
 
         private readonly Dictionary<(GameControllerEventType type, string key), long> _lastSeenKeyOrder = new Dictionary<(GameControllerEventType type, string key), long>();
 
-        (IHttpRequestResponse request, HttpStatusCode code, string message) ProcessHttpRequest(
-            IHttpRequestResponse request, TimeSpan interval)
+        (HttpListenerContext request, HttpStatusCode code, string message) ProcessHttpRequest(HttpListenerContext request)
         {
             try
             {
                 // Example: http://phoneip:8080/Button/X/1
-                // Example: http://phoneip:8080/Axis/X/-0.5
-                var tokens = request.Path?.Trim('/').Split('/') ?? new string[0];
+                // Example: http://phoneip:8080/Axis/X/-0.5                
+                var tokens = request?.Request?.Url?.AbsolutePath?.Trim('/').Split('/') ?? new string[0];
 
                 var tokensPerEvent = 4;
 
@@ -91,47 +79,26 @@ namespace BrickController2.PlatformServices.GameController
                     return (request, HttpStatusCode.OK, defaultWebPage);
                 }
 
-                var events =
-                    Enumerable.Range(0, tokens.Length / tokensPerEvent)
-                    // split multiple events
-                    .Select(i => Enumerable.Range(0, tokensPerEvent).Select(ii => tokens[i*tokensPerEvent+ii]).ToList() )
-                    // parse pressed keys
-                    .Select(eventTokens => new {
-                        type = Enum.TryParse<GameControllerEventType>(eventTokens[0], out var controllerType) ? controllerType : GameControllerEventType.Button,
-                        key = eventTokens[1],
-                        value = float.TryParse(eventTokens[2], NumberStyles.Number, CultureInfo.InvariantCulture, out var value) ? value : 0,
-                        order = long.TryParse( eventTokens[3], out var order) ? order : long.MinValue,
-                    })    
-                    .Select(x => new {
-                        x.type,
-                        x.key,
-                        x.value,
-                        x.order,
-                        // make sure to skip out of order key presses, so that we won't override eg. last button release event
-                        isSkipped = 
-                            x.order != long.MinValue 
-                            && _lastSeenKeyOrder.TryGetValue((x.type, x.key), out var lastOrder) 
-                            && x.order < lastOrder,
-                    })
-                    .ToList()
+                var type = Enum.TryParse<GameControllerEventType>(tokens[0], out var _type) ? _type : GameControllerEventType.Button;
+                var key = tokens[1];
+                var value = float.TryParse(tokens[2], NumberStyles.Number, CultureInfo.InvariantCulture, out var _value) ? _value : 0;
+                var order = long.TryParse(tokens[3], out var _order) ? _order : long.MinValue;
+                // make sure to skip out of order key presses, so that we won't override eg. last button release event
+                var isSkipped =
+                    order != long.MinValue
+                    && _lastSeenKeyOrder.TryGetValue((type, key), out var lastOrder)
+                    && order < lastOrder
                 ;
+            
+                // write current order to cache
+                if(!isSkipped && order != long.MinValue)
+                    _lastSeenKeyOrder[(type, key)] = order;
 
-                // write current order values to cache
-                events.ForEach(e => {
-                    if(!e.isSkipped && e.order != long.MinValue)
-                        _lastSeenKeyOrder[(e.type, e.key)] = e.order;
-                });
 
-                var eventArgs = events
-                        .Where(x => !x.isSkipped)
-                        .ToLookup(k => (type: k.type, key: k.key), v => v.value)
-                        .ToDictionary(k => k.Key, v => v.Last())
-                    ;
+                if (!isSkipped)
+                    GameControllerEvent?.Invoke(this, new GameControllerEventArgs(type, key, value));
 
-                if (eventArgs.Any())
-                    GameControllerEvent?.Invoke(this, new GameControllerEventArgs(eventArgs));
-
-                return (request, HttpStatusCode.OK, $"Ms: {interval}\n" + string.Join("\n", events.Select(e => $"{e.type}:{e.key}:{e.value}:{e.isSkipped}") ) );
+                return (request, HttpStatusCode.OK, $"{type}:{key}:{value}:{isSkipped}");
             }
             catch (Exception ex)
             {
@@ -140,23 +107,15 @@ namespace BrickController2.PlatformServices.GameController
             }
         }
 
-        async Task SendResponse(IHttpRequestResponse request, HttpSender httpSender, HttpStatusCode code, string message)
+        void SendResponse((HttpListenerContext request, HttpStatusCode code, string message) request)
         {
             try
             {
-                var response = new HttpResponse
-                {
-                    StatusCode = (int) code,
-                    ResponseReason = code.ToString(),
-                    Headers = new Dictionary<string, string>
-                    {
-                        {"Date", DateTime.UtcNow.ToString("r")},
-                        {"Content-Type", "text/html; charset=UTF-8"},
-                    },
-                    Body = new MemoryStream(Encoding.UTF8.GetBytes(message))
-                };
-
-                await httpSender.SendTcpResponseAsync(request, response).ConfigureAwait(false);
+                request.request.Response.StatusCode = (int) request.code;
+                request.request.Response.StatusDescription = request.code.ToString();
+                request.request.Response.ContentType = "text/html; charset=UTF-8";
+                var buffer = Encoding.UTF8.GetBytes(request.message);
+                request.request.Response.Close(buffer, false);
             }
             catch (Exception ex)
             {
@@ -239,7 +198,7 @@ div#controls input[type=range] {
   }
     
   function sendEventThrottled(type, key, value) { 
-    var time = value == 0 ? 0 : 200;
+    var time = value == 0 ? 0 : 50;
     throttle( type+'.'+key, time, _ => sendEvent(type, key, value) );
   }
 
