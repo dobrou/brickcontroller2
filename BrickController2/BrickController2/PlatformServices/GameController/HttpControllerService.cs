@@ -125,8 +125,6 @@ namespace BrickController2.PlatformServices.GameController
         }
 
         private string defaultWebPage = @"
-
-
 <html>
 <head>
 <title>Brick Controller</title>
@@ -147,8 +145,165 @@ div.joy {
   filter: brightness(85%);
 }
 </style>
+
+<script type='text/javascript'>
+  var isGyroEnabled = false;
+  var gyroBase = null;
+
+  if (window.DeviceOrientationEvent) {
+    window.addEventListener('deviceorientation', function () {
+      processGyro({a: event.alpha, b: event.beta, g: event.gamma});
+    }, true);
+  } 
+
+  function processGyro(gyro) {
+    if(!isGyroEnabled) return;
+    
+    // Android
+    // alpha 0..360
+    // beta -180..180 => 0..360
+    // gamma -90..0..90|-90..0..-90 => 0..180|0..180
+    var gyroNorm = {
+      a: gyro.a,
+      b: gyro.b + 180,
+      g: gyro.g + 90,
+    };
+
+    if(!gyroBase) gyroBase = gyroNorm;
+    
+    var gyroRange = document.getElementById('gyrorangedeg').value;
+
+    var gyroDelta = {
+      a: circleSmallestAngleDistance(gyroNorm.a, gyroBase.a) / gyroRange,
+      b: circleSmallestAngleDistance(gyroNorm.b, gyroBase.b) / gyroRange,
+      g: circleSmallestAngleDistance(gyroNorm.g*2, gyroBase.g*2)/2 / gyroRange,
+    };
+    
+    //sendEventThrottled('Axis', 'gyroA', gyroDelta.a);
+    sendEventThrottled('Axis', 'gyroB', gyroDelta.b);
+    sendEventThrottled('Axis', 'gyroG', gyroDelta.g);
+    
+    document.getElementById('gyroinfo').innerHTML = 
+      roundValue(gyroDelta.a) +' '+ roundValue(gyroDelta.b) +' '+ roundValue(gyroDelta.g)      
+      +'<br>'+ 
+      roundValue(gyroNorm.a,0) +' '+ roundValue(gyroNorm.b,0) +' '+ roundValue(gyroNorm.g,0)
+      +'<br>'+ 
+      roundValue(gyro.a,0) +' '+ roundValue(gyro.b,0) +' '+ roundValue(gyro.g,0)      
+    ;        
+  }  
+  
+  function circleSmallestAngleDistance(a, b) {
+    return ((a - b + 180 + 360) % 360 - 180);
+  }
+    
+  function togglegyro() {
+    isGyroEnabled = !isGyroEnabled;
+    
+    gyroBase = null;
+    
+    sendEventThrottled('Axis', 'gyroA', 0);
+    sendEventThrottled('Axis', 'gyroB', 0);
+    sendEventThrottled('Axis', 'gyroG', 0);
+    
+    document.getElementById('togglegyro').value = isGyroEnabled ? 'Stop Gyro' : 'Start Gyro' ;
+  }
+</script>
+
+<script type='text/javascript'>
+  document.addEventListener('keydown', function(event) {
+    if(event.repeat) return;  
+    sendButtonEvent(event.key, 1);
+  });
+  document.addEventListener('keyup', function(event) {
+    sendButtonEvent(event.key, 0);
+  });
+
+  function sendButtonEvent(key, value) {
+    if(key.length == 1) key = key.toUpperCase();
+    sendEvent('Button', key, value);
+  }
+    
+  function sendEvent(type, key, value) {   
+    value = roundValue(value); 
+    var command = '/'+type+'/'+key+'/'+value+'/'+(new Date().getTime());
+    var url = 'http://' + document.getElementById('server').value + command;
+  
+    document.getElementById('lastkey').textContent = command;
+    console.log(url);
+
+    var Http = new XMLHttpRequest();
+    Http.open('GET', url);
+    Http.send();
+    Http.onload = (e)=>{ 
+      document.getElementById('lastresponse').textContent = Http.responseText;
+      console.log(Http.responseText) 
+    };
+  }
+
+  function roundValue(value, decimals) {
+    var f = Math.pow(10, decimals === undefined ? 2 : decimals);
+    return Math.round(value*f)/f;
+  }
+
+  function resetJoy(range) {
+    if( document.getElementById('joyautoreset').checked ) 
+      range.value = 0;
+      
+    sendJoyEvent(range);
+  }
+  
+  function sendJoyEvent(range) {
+    sendEventThrottled('Axis', range.id, range.value );
+  }
+    
+  function sendEventThrottled(type, key, value) { 
+    var time = value == 0 ? 0 : 50;
+    throttle( type+'.'+key, time, _ => sendEvent(type, key, value) );
+  }
+
+  var throttleNextRun = {};
+  function throttle(id, time, func) {
+    if(time == 0){
+      // no scheduling and no throttling when time is zero
+      func();
+      if(throttleNextRun[id]) throttleNextRun[id] = null;
+    } else if(throttleNextRun[id] === undefined){
+      // undefined -> no event since now-time, execute immediately and block throttle window with null
+      func();
+      throttleNextRun[id] = null;
+      setTimeout(function() { 
+        var f = throttleNextRun[id]; 
+        throttleNextRun[id] = undefined; 
+        if(f) throttle(id, time, f);
+      }, time);
+    }else{
+      throttleNextRun[id] = func;
+    }
+  };
+</script>
+
 </head>
 <body>
+<div>
+  Press any key to send it as button event.
+</div>
+<div>
+  Touch and drag color or sliders boxes as joystick.
+</div>
+<div>
+  Last key pressed: <div id='lastkey' ></div>
+</div>
+<div>
+  Last key response: <div id='lastresponse' ></div>
+</div>
+<div>
+  <input type='button' id='togglegyro' onclick='togglegyro();' value='Start Gyro'></input>
+  <label for='gyrorangedeg'>Max range degrees</label>
+  <input type='text' size='3' id='gyrorangedeg' value='35'></input>
+  <div id='gyroinfo'></div>
+</div>
+<div id='joycontainer'>
+</div>
 <div id='controls'>
   <input type='range' min='-1' max='1' step='0.1' id='X' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' ></input>
   <input type='range' min='-1' max='1' step='0.1' id='Y' onInput='sendJoyEvent(this);' onTouchEnd='resetJoy(this);' onMouseUp='resetJoy(this);' ></input>
@@ -166,23 +321,11 @@ div.joy {
   <label for='server'>Brick Controller address</label>
   <script type='text/javascript'>document.getElementById('server').value = window.location.host</script>
 </div>
-<div>
-  Last key pressed: <div id='lastkey' ></div>
-</div>
-<div>
-  Last key response: <div id='lastresponse' ></div>
-</div>
-<div>
-  Press any key to send it as button event.
-</div>
-<div>
-  Touch and drag color or sliders boxes as joystick.
-</div>
 
 <script type='text/javascript' src='https://yoannmoinet.github.io/nipplejs/javascripts/nipplejs.js'></script>
-<script>
+<script type='text/javascript'>
   function createJoy(id, color, xname, yname){
-    var container = document.body;
+    var container = document.getElementById('joycontainer');
     var joyElement = document.createElement('div');
     joyElement.id = 'joy'+id;
     joyElement.className = 'joy';
@@ -219,75 +362,8 @@ div.joy {
   createJoy(6, 180, '3', '4');
 </script>
 
-
-<script type='text/javascript'>
-  document.addEventListener('keydown', function(event) {
-    if(event.repeat) return;  
-    sendButtonEvent(event.key, 1);
-  });
-  document.addEventListener('keyup', function(event) {
-    sendButtonEvent(event.key, 0);
-  });
-
-  function sendButtonEvent(key, value) {
-    if(key.length == 1) key = key.toUpperCase();
-    sendEvent('Button', key, value);
-  }
-    
-  function sendEvent(type, key, value) {    
-    var command = '/'+type+'/'+key+'/'+value+'/'+(new Date().getTime());
-    var url = 'http://' + document.getElementById('server').value + command;
-  
-    document.getElementById('lastkey').textContent = command;
-    console.log(url);
-
-    var Http = new XMLHttpRequest();
-    Http.open('GET', url);
-    Http.send();
-    Http.onload = (e)=>{ 
-      document.getElementById('lastresponse').textContent = Http.responseText;
-      console.log(Http.responseText) 
-    };
-  }
-
-
-  function resetJoy(range) {
-    if( document.getElementById('joyautoreset').checked ) 
-      range.value = 0;
-      
-    sendJoyEvent(range);
-  }
-  
-  function sendJoyEvent(range) {
-    sendEventThrottled('Axis', range.id, range.value );
-  }
-    
-  function sendEventThrottled(type, key, value) { 
-    var time = value == 0 ? 0 : 100;
-    throttle( type+'.'+key, time, _ => sendEvent(type, key, value) );
-  }
-
-  var throttleNextRun = {};
-  function throttle(id, time, func) {
-    if(time == 0){
-      func();
-      if(throttleNextRun[id]) throttleNextRun[id] = null;
-    } else if(throttleNextRun[id] === undefined){
-      func();
-      throttleNextRun[id] = null;
-      setTimeout(function() { 
-        var f = throttleNextRun[id]; 
-        throttleNextRun[id] = undefined; 
-        if(f) throttle(id, time, f);
-      }, time);
-    }else{
-      throttleNextRun[id] = func;
-    }
-  };
-</script>
 </body>
 </html>
-
 ";
 
     }
